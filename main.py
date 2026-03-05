@@ -4,6 +4,7 @@ Competitor Radar AI — Production Backend
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 from app.core.database import engine, Base
 from app.api import competitors, scanning, changes, reports, auth, demo
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -15,6 +16,14 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            await conn.execute(text("ALTER TABLE reports ALTER COLUMN threat_level TYPE TEXT"))
+        except Exception:
+            pass
+        try:
+            await conn.execute(text("ALTER TABLE reports ALTER COLUMN title TYPE TEXT"))
+        except Exception:
+            pass
     start_scheduler(interval_hours=12)
     yield
     stop_scheduler()

@@ -14,7 +14,7 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     name = Column(String(255), default="")
-    plan = Column(String(50), default="free")  # free, pro, team
+    plan = Column(String(50), default="free")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     competitors = relationship("Competitor", back_populates="user", cascade="all, delete-orphan")
@@ -47,12 +47,12 @@ class Snapshot(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     competitor_id = Column(Integer, ForeignKey("competitors.id"), nullable=False)
-    page_type = Column(String(50), nullable=False)  # homepage, pricing, careers, docs
+    page_type = Column(String(50), nullable=False)
     url = Column(String(500), nullable=False)
     content_hash = Column(String(64), nullable=False)
-    content_data = Column(JSON)  # Structured extracted content
-    raw_text = Column(Text)  # Full text for diffing
-    status = Column(String(20), default="success")  # success, error
+    content_data = Column(JSON)
+    raw_text = Column(Text)
+    status = Column(String(20), default="success")
     error_message = Column(Text)
     scraped_at = Column(DateTime(timezone=True), server_default=func.now())
     
@@ -65,10 +65,10 @@ class Change(Base):
     id = Column(Integer, primary_key=True, index=True)
     competitor_id = Column(Integer, ForeignKey("competitors.id"), nullable=False)
     page_type = Column(String(50), nullable=False)
-    change_type = Column(String(100), nullable=False)  # pricing_change, jobs_added, etc.
-    change_category = Column(String(50))  # pricing, hiring, messaging, content
+    change_type = Column(String(100), nullable=False)
+    change_category = Column(String(50))
     summary = Column(Text)
-    details = Column(JSON)  # Full change details
+    details = Column(JSON)
     significance = Column(Float, default=0.0)
     detected_at = Column(DateTime(timezone=True), server_default=func.now())
     
@@ -82,12 +82,12 @@ class Report(Base):
     id = Column(Integer, primary_key=True, index=True)
     competitor_id = Column(Integer, ForeignKey("competitors.id"))
     change_id = Column(Integer, ForeignKey("changes.id"))
-    report_type = Column(String(50), nullable=False)  # change_brief, weekly, monthly
-    title = Column(String(500), nullable=False)
+    report_type = Column(String(50), nullable=False)
+    title = Column(Text)
     what_changed = Column(Text)
     why_it_matters = Column(Text)
     what_to_do = Column(Text)
-    threat_level = Column(String(20))  # critical, high, medium, low
+    threat_level = Column(Text)
     full_analysis = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
