@@ -3,22 +3,25 @@ Competitor Radar AI — Production Backend
 """
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.core.config import settings
 from app.core.database import engine, Base
 from app.api import competitors, scanning, changes, reports, auth
+from app.services.scheduler import start_scheduler, stop_scheduler
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    start_scheduler(interval_hours=12)
     yield
+    stop_scheduler()
     await engine.dispose()
 
 app = FastAPI(title="Competitor Radar AI", version="1.0.0", lifespan=lifespan)
 
-# Manual CORS — bulletproof approach
 @app.middleware("http")
 async def add_cors_headers(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -31,10 +34,8 @@ async def add_cors_headers(request: Request, call_next):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
     response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Max-Age"] = "86400"
     return response
 
-# Routes
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(competitors.router, prefix="/api/competitors", tags=["Competitors"])
 app.include_router(scanning.router, prefix="/api/scan", tags=["Scanning"])
@@ -43,8 +44,8 @@ app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 
 @app.get("/")
 async def root():
-    return {"app": "Competitor Radar AI", "status": "running"}
+    return {"app": "Competitor Radar AI", "status": "running", "auto_scan": "every 12 hours"}
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "auto_scan": "active"}
