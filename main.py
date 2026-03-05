@@ -11,11 +11,9 @@ from app.api import competitors, scanning, changes, reports, auth
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
-    # Shutdown
     await engine.dispose()
 
 app = FastAPI(
@@ -25,11 +23,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow frontend on Vercel
+# CORS — allow all origins for now (fix CORS issues)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
