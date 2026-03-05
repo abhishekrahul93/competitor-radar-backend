@@ -10,6 +10,7 @@ from app.models.models import Competitor, Snapshot, Change, Report
 from app.services.scraper import fetch_page, extract_content, compute_content_hash
 from app.services.change_detector import detect_changes
 from app.services.ai_analyst import generate_brief
+from app.services.email_service import send_change_alert
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
@@ -81,6 +82,7 @@ async def _scan_single(comp, db):
                         threat_level=brief.get("threat_level", ""),
                         full_analysis=brief.get("full_analysis", ""))
                     db.add(report)
+                    await send_change_alert(comp.name, page_type, changes, brief)
         except Exception as e:
             logger.error(f"Error: {comp.name}/{page_type}: {e}")
     return changes_found
