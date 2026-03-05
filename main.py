@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from app.core.database import engine, Base
-from app.api import competitors, scanning, changes, reports, auth
+from app.api import competitors, scanning, changes, reports, auth, demo
 from app.services.scheduler import start_scheduler, stop_scheduler
 import logging
 
@@ -41,6 +41,7 @@ app.include_router(competitors.router, prefix="/api/competitors", tags=["Competi
 app.include_router(scanning.router, prefix="/api/scan", tags=["Scanning"])
 app.include_router(changes.router, prefix="/api/changes", tags=["Changes"])
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
+app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
 
 @app.get("/")
 async def root():
