@@ -1,8 +1,8 @@
 """
 Competitor Radar AI — Production Backend
-FastAPI + PostgreSQL + AI Analysis Engine
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.core.config import settings
@@ -16,24 +16,26 @@ async def lifespan(app: FastAPI):
     yield
     await engine.dispose()
 
-app = FastAPI(
-    title="Competitor Radar AI",
-    description="AI-Powered Competitive Intelligence API",
-    version="1.0.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Competitor Radar AI", version="1.0.0", lifespan=lifespan)
 
-# CORS — allow all origins for now (fix CORS issues)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Manual CORS — bulletproof approach
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = JSONResponse(content={}, status_code=200)
+    else:
+        try:
+            response = await call_next(request)
+        except Exception:
+            response = JSONResponse(content={"detail": "Internal server error"}, status_code=500)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    return response
 
 # Routes
-app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(competitors.router, prefix="/api/competitors", tags=["Competitors"])
 app.include_router(scanning.router, prefix="/api/scan", tags=["Scanning"])
 app.include_router(changes.router, prefix="/api/changes", tags=["Changes"])
@@ -41,12 +43,7 @@ app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 
 @app.get("/")
 async def root():
-    return {
-        "app": "Competitor Radar AI",
-        "version": "1.0.0",
-        "status": "running",
-        "docs": "/docs",
-    }
+    return {"app": "Competitor Radar AI", "status": "running"}
 
 @app.get("/health")
 async def health():
