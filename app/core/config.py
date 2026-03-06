@@ -1,49 +1,30 @@
-"""
-Application configuration — loads from environment variables.
-"""
 from pydantic_settings import BaseSettings
 from typing import List
 
 class Settings(BaseSettings):
-    # App
     APP_NAME: str = "Competitor Radar AI"
     DEBUG: bool = False
     SECRET_KEY: str = "change-this-to-a-random-secret-key-in-production"
-    
-    # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/competitor_radar"
-    
-    # CORS
-    CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "https://competitor-radar-frontend.vercel.app",
-    ]
-    
-    # AI Provider
+    CORS_ORIGINS: List[str] = ["http://localhost:3000","http://localhost:5173","https://competitor-radar-frontend.vercel.app"]
     AI_PROVIDER: str = "openai"
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
     AI_MODEL: str = "gpt-4o-mini"
-    
-    # JWT Auth
     JWT_SECRET: str = "change-this-jwt-secret-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440
-    
-    # Scraping
     SCRAPE_TIMEOUT: int = 30
     SCRAPE_MAX_RETRIES: int = 3
     SCRAPE_DELAY_MIN: float = 1.0
     SCRAPE_DELAY_MAX: float = 3.0
-    
-    # Email Alerts
     SMTP_EMAIL: str = ""
     SMTP_PASSWORD: str = ""
     ALERT_EMAIL: str = ""
-    
-    # Change Detection
     SIMILARITY_THRESHOLD: float = 0.92
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
     
     class Config:
         env_file = ".env"
