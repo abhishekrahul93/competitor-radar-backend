@@ -17,3 +17,4 @@ stripe==8.0.0
 reportlab==4.1.0
 cloudscraper==1.2.71
 feedparser==6.0.11
+openai>=1.0.0
