@@ -1,6 +1,7 @@
 ﻿from sqlalchemy import Column, Integer, String, Text, Float, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from datetime import datetime
 from app.core.database import Base
 
 class User(Base):
@@ -26,12 +27,16 @@ class Competitor(Base):
     docs_url = Column(String(500))
     category = Column(String(100), default="general")
     is_active = Column(Boolean, default=True)
+    twitter_handle = Column(String(100), nullable=True)
+    linkedin_url = Column(String(500), nullable=True)
+    reddit_keywords = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     user = relationship("User", back_populates="competitors")
     snapshots = relationship("Snapshot", back_populates="competitor", cascade="all, delete-orphan")
     changes = relationship("Change", back_populates="competitor", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="competitor", cascade="all, delete-orphan")
+    social_posts = relationship("SocialPost", back_populates="competitor", cascade="all, delete-orphan")
 
 class Snapshot(Base):
     __tablename__ = "snapshots"
@@ -76,3 +81,20 @@ class Report(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     competitor = relationship("Competitor", back_populates="reports")
     change = relationship("Change", back_populates="reports")
+
+class SocialPost(Base):
+    __tablename__ = "social_posts"
+    id = Column(Integer, primary_key=True, index=True)
+    competitor_id = Column(Integer, ForeignKey("competitors.id"), nullable=False)
+    platform = Column(String(50), nullable=False)
+    post_id = Column(String(255))
+    post_url = Column(String(500))
+    content = Column(Text)
+    author = Column(String(255))
+    posted_at = Column(DateTime, nullable=True)
+    engagement = Column(JSON, default={})
+    sentiment = Column(String(20), default="neutral")
+    is_announcement = Column(Boolean, default=False)
+    ai_summary = Column(Text)
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    competitor = relationship("Competitor", back_populates="social_posts")
