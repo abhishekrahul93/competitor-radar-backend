@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from app.core.database import engine, Base
-from app.api import competitors, scanning, changes, reports, auth, demo, payments
+from app.api import competitors, scanning, changes, reports, auth, demo, payments, export
 from app.services.scheduler import start_scheduler, stop_scheduler
 import logging
 
@@ -13,14 +13,11 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        try:
-            await conn.execute(text("ALTER TABLE reports ALTER COLUMN threat_level TYPE TEXT"))
-        except Exception:
-            pass
-        try:
-            await conn.execute(text("ALTER TABLE reports ALTER COLUMN title TYPE TEXT"))
-        except Exception:
-            pass
+        for alter in ["ALTER TABLE reports ALTER COLUMN threat_level TYPE TEXT","ALTER TABLE reports ALTER COLUMN title TYPE TEXT","ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_webhook TEXT DEFAULT ''"]:
+            try:
+                await conn.execute(text(alter))
+            except Exception:
+                pass
     start_scheduler(interval_hours=12)
     yield
     stop_scheduler()
@@ -49,10 +46,11 @@ app.include_router(changes.router, prefix="/api/changes", tags=["Changes"])
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
 app.include_router(payments.router, prefix="/api/payments", tags=["Payments"])
+app.include_router(export.router, prefix="/api/export", tags=["Export"])
 
 @app.get("/")
 async def root():
-    return {"app": "Competitor Radar AI", "status": "running", "auto_scan": "every 12 hours"}
+    return {"app": "Competitor Radar AI", "status": "running"}
 
 @app.get("/health")
 async def health():
