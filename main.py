@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from app.core.database import engine, Base
-from app.api import competitors, scanning, changes, reports, auth, demo, payments, export
+from app.api import competitors, scanning, changes, reports, auth, demo, payments, export, seo
 from app.services.scheduler import start_scheduler, stop_scheduler
 import logging
 
@@ -47,6 +47,7 @@ app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
 app.include_router(payments.router, prefix="/api/payments", tags=["Payments"])
 app.include_router(export.router, prefix="/api/export", tags=["Export"])
+app.include_router(seo.router, prefix="/api/seo", tags=["SEO"])
 
 @app.get("/")
 async def root():
