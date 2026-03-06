@@ -20,9 +20,9 @@ class SocialSettingsUpdate(BaseModel):
 
 
 @router.get("/summary")
-async def get_social_summary(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def get_social_summary(db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
-        comp_result = await db.execute(select(Competitor).where(Competitor.user_id == current_user.id, Competitor.is_active == True))
+        comp_result = await db.execute(select(Competitor).where(Competitor.user_id == current_user["user_id"], Competitor.is_active == True))
         competitors = comp_result.scalars().all()
         comp_ids = [c.id for c in competitors]
         comp_map = {c.id: c.name for c in competitors}
@@ -52,9 +52,9 @@ async def get_social_summary(db: AsyncSession = Depends(get_db), current_user: U
 
 
 @router.get("/posts/{competitor_id}")
-async def get_competitor_posts(competitor_id: int, platform: Optional[str] = None, limit: int = 30, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def get_competitor_posts(competitor_id: int, platform: Optional[str] = None, limit: int = 30, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
-        comp = await db.execute(select(Competitor).where(Competitor.id == competitor_id, Competitor.user_id == current_user.id))
+        comp = await db.execute(select(Competitor).where(Competitor.id == competitor_id, Competitor.user_id == current_user["user_id"]))
         if not comp.scalar_one_or_none():
             raise HTTPException(404, "Competitor not found")
         query = select(SocialPost).where(SocialPost.competitor_id == competitor_id)
@@ -70,9 +70,9 @@ async def get_competitor_posts(competitor_id: int, platform: Optional[str] = Non
 
 
 @router.post("/scan/{competitor_id}")
-async def scan_social(competitor_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def scan_social(competitor_id: int, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
-        result = await db.execute(select(Competitor).where(Competitor.id == competitor_id, Competitor.user_id == current_user.id))
+        result = await db.execute(select(Competitor).where(Competitor.id == competitor_id, Competitor.user_id == current_user["user_id"]))
         competitor = result.scalar_one_or_none()
         if not competitor:
             raise HTTPException(404, "Competitor not found")
@@ -85,9 +85,9 @@ async def scan_social(competitor_id: int, db: AsyncSession = Depends(get_db), cu
 
 
 @router.post("/scan-all")
-async def scan_all_social(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def scan_all_social(db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
-        comp_result = await db.execute(select(Competitor).where(Competitor.user_id == current_user.id, Competitor.is_active == True))
+        comp_result = await db.execute(select(Competitor).where(Competitor.user_id == current_user["user_id"], Competitor.is_active == True))
         competitors = comp_result.scalars().all()
         total_new, results = 0, []
         for comp in competitors:
@@ -103,9 +103,9 @@ async def scan_all_social(db: AsyncSession = Depends(get_db), current_user: User
 
 
 @router.put("/settings/{competitor_id}")
-async def update_social_settings(competitor_id: int, settings: SocialSettingsUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def update_social_settings(competitor_id: int, settings: SocialSettingsUpdate, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
-        result = await db.execute(select(Competitor).where(Competitor.id == competitor_id, Competitor.user_id == current_user.id))
+        result = await db.execute(select(Competitor).where(Competitor.id == competitor_id, Competitor.user_id == current_user["user_id"]))
         competitor = result.scalar_one_or_none()
         if not competitor:
             raise HTTPException(404, "Competitor not found")
@@ -124,9 +124,9 @@ async def update_social_settings(competitor_id: int, settings: SocialSettingsUpd
 
 
 @router.get("/settings/{competitor_id}")
-async def get_social_settings(competitor_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def get_social_settings(competitor_id: int, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
-        result = await db.execute(select(Competitor).where(Competitor.id == competitor_id, Competitor.user_id == current_user.id))
+        result = await db.execute(select(Competitor).where(Competitor.id == competitor_id, Competitor.user_id == current_user["user_id"]))
         competitor = result.scalar_one_or_none()
         if not competitor:
             raise HTTPException(404, "Competitor not found")
@@ -134,4 +134,4 @@ async def get_social_settings(competitor_id: int, db: AsyncSession = Depends(get
     except HTTPException:
         raise
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e), "traceback": traceback.format_exc()})
+        return JSONResponse(status_code=500, content={"error": str(e), "traceback":
