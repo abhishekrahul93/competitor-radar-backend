@@ -26,7 +26,11 @@ async def _fetch_twitter_api(handle: str, bearer_token: str) -> list:
             tweets_resp = await client.get(
                 f"https://api.twitter.com/2/users/{user_id}/tweets",
                 headers={"Authorization": f"Bearer {bearer_token}"},
-                params={"max_results": 10, "tweet.fields": "created_at,public_metrics,text", "exclude": "retweets,replies"}
+                params={
+                    "max_results": 10,
+                    "tweet.fields": "created_at,public_metrics,text",
+                    "exclude": "retweets,replies"
+                }
             )
             for tweet in tweets_resp.json().get("data", []):
                 posts.append({
@@ -48,6 +52,9 @@ async def _fetch_twitter_nitter(handle: str) -> list:
         "https://nitter.privacydev.net",
         "https://nitter.poast.org",
         "https://nitter.net",
+        "https://nitter.cz",
+        "https://nitter.woodland.cafe",
+        "https://n.opnxng.com",
     ]
     for instance in nitter_instances:
         try:
@@ -98,10 +105,60 @@ async def fetch_reddit_mentions(competitor) -> list:
     if not keywords:
         return []
     posts = []
+
+    # Method 1: Try Reddit RSS feed (less likely to be blocked)
     try:
         async with httpx.AsyncClient(
-            headers={"User-Agent": "CompetitorRadar/1.0 (monitoring tool)"},
-            timeout=15
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            timeout=15,
+            follow_redirects=True
+        ) as client:
+            rss_url = f"https://www.reddit.com/search.rss?q={keywords}&sort=new&limit=10&t=week"
+            resp = await client.get(rss_url)
+            if resp.status_code == 200 and resp.text.strip():
+                feed = feedparser.parse(resp.text)
+                for entry in feed.entries[:10]:
+                    try:
+                        if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                            posted_at = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                        elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                            posted_at = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+                        else:
+                            posted_at = datetime.utcnow().replace(tzinfo=timezone.utc)
+                    except Exception:
+                        posted_at = datetime.utcnow().replace(tzinfo=timezone.utc)
+
+                    content = _clean_html(entry.get("summary", entry.get("title", "")))
+                    link = entry.get("link", "")
+                    post_id = entry.get("id", link)
+
+                    posts.append({
+                        "post_id": post_id,
+                        "platform": "reddit",
+                        "content": f"{entry.get('title', '')}\n{content[:400]}".strip(),
+                        "post_url": link,
+                        "author": entry.get("author", "unknown"),
+                        "posted_at": posted_at,
+                        "engagement": {}
+                    })
+                if posts:
+                    print(f"[Reddit RSS] Found {len(posts)} posts for '{keywords}'")
+                    return posts
+    except Exception as e:
+        print(f"[Reddit RSS] Error for '{keywords}': {e}")
+
+    # Method 2: Try JSON API with browser-like headers
+    try:
+        async with httpx.AsyncClient(
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=15,
+            follow_redirects=True
         ) as client:
             resp = await client.get(
                 "https://www.reddit.com/search.json",
@@ -119,8 +176,56 @@ async def fetch_reddit_mentions(competitor) -> list:
                         "posted_at": datetime.fromtimestamp(p["created_utc"], tz=timezone.utc),
                         "engagement": {"upvotes": p.get("ups", 0), "comments": p.get("num_comments", 0)}
                     })
+                if posts:
+                    print(f"[Reddit JSON] Found {len(posts)} posts for '{keywords}'")
+            else:
+                print(f"[Reddit JSON] Status {resp.status_code} for '{keywords}'")
     except Exception as e:
-        print(f"[Reddit] Error for '{keywords}': {e}")
+        print(f"[Reddit JSON] Error for '{keywords}': {e}")
+
+    # Method 3: Try subreddit-specific RSS feeds for common subreddits
+    if not posts:
+        subreddits = ["technology", "artificial", "SaaS", "startups", "MachineLearning"]
+        for sub in subreddits:
+            try:
+                async with httpx.AsyncClient(
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    },
+                    timeout=10,
+                    follow_redirects=True
+                ) as client:
+                    resp = await client.get(
+                        f"https://www.reddit.com/r/{sub}/search.rss?q={keywords}&restrict_sr=on&sort=new&t=month&limit=5"
+                    )
+                    if resp.status_code == 200 and resp.text.strip():
+                        feed = feedparser.parse(resp.text)
+                        for entry in feed.entries[:5]:
+                            try:
+                                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                                    posted_at = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                                else:
+                                    posted_at = datetime.utcnow().replace(tzinfo=timezone.utc)
+                            except Exception:
+                                posted_at = datetime.utcnow().replace(tzinfo=timezone.utc)
+
+                            content = _clean_html(entry.get("summary", entry.get("title", "")))
+                            posts.append({
+                                "post_id": entry.get("id", entry.get("link", "")),
+                                "platform": "reddit",
+                                "content": f"{entry.get('title', '')}\n{content[:400]}".strip(),
+                                "post_url": entry.get("link", ""),
+                                "author": entry.get("author", "unknown"),
+                                "posted_at": posted_at,
+                                "engagement": {}
+                            })
+            except Exception as e:
+                print(f"[Reddit Sub {sub}] Error: {e}")
+                continue
+
+        if posts:
+            print(f"[Reddit Subreddit] Found {len(posts)} posts for '{keywords}'")
+
     return posts
 
 
@@ -135,7 +240,7 @@ async def analyze_post_with_ai(content: str, competitor_name: str) -> dict:
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a competitive intelligence analyst. Respond ONLY with valid JSON."},
-                {"role": "user", "content": f'Analyze this post from {competitor_name}:\n\n"{content[:600]}"\n\nReturn JSON with keys: sentiment (positive/negative/neutral), is_announcement (bool), summary (string), significance (high/medium/low)'}
+                {"role": "user", "content": f'Analyze this post about {competitor_name}:\n\n"{content[:600]}"\n\nReturn JSON with keys: sentiment (positive/negative/neutral), is_announcement (bool), summary (string max 120 chars), significance (high/medium/low)'}
             ],
             max_tokens=150,
             temperature=0.3
@@ -155,6 +260,8 @@ async def scan_competitor_social(competitor, db) -> int:
     twitter_posts = await fetch_twitter_posts(competitor)
     reddit_posts = await fetch_reddit_mentions(competitor)
     all_posts = twitter_posts + reddit_posts
+
+    print(f"[Social] {competitor.name}: {len(twitter_posts)} twitter, {len(reddit_posts)} reddit posts found")
 
     new_count = 0
     for post_data in all_posts:
@@ -188,4 +295,5 @@ async def scan_competitor_social(competitor, db) -> int:
     if new_count:
         await db.commit()
 
+    print(f"[Social] {competitor.name}: {new_count} new posts saved")
     return new_count
