@@ -3,17 +3,23 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from app.core.database import engine, Base
-from app.api import competitors, scanning, changes, reports, auth, demo, payments, export, seo
+from app.api import competitors, scanning, changes, reports, auth, demo, payments, export, seo, social
 from app.services.scheduler import start_scheduler, stop_scheduler
 import logging
-
 logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for alter in ["ALTER TABLE reports ALTER COLUMN threat_level TYPE TEXT","ALTER TABLE reports ALTER COLUMN title TYPE TEXT","ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_webhook TEXT DEFAULT ''"]:
+        for alter in [
+            "ALTER TABLE reports ALTER COLUMN threat_level TYPE TEXT",
+            "ALTER TABLE reports ALTER COLUMN title TYPE TEXT",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_webhook TEXT DEFAULT ''",
+            "ALTER TABLE competitors ADD COLUMN IF NOT EXISTS twitter_handle VARCHAR",
+            "ALTER TABLE competitors ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR",
+            "ALTER TABLE competitors ADD COLUMN IF NOT EXISTS reddit_keywords VARCHAR"
+        ]:
             try:
                 await conn.execute(text(alter))
             except Exception:
@@ -48,6 +54,7 @@ app.include_router(demo.router, prefix="/api/demo", tags=["Demo"])
 app.include_router(payments.router, prefix="/api/payments", tags=["Payments"])
 app.include_router(export.router, prefix="/api/export", tags=["Export"])
 app.include_router(seo.router, prefix="/api/seo", tags=["SEO"])
+app.include_router(social.router, prefix="/api", tags=["Social"])
 
 @app.get("/")
 async def root():

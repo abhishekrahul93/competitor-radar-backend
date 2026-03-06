@@ -16,3 +16,4 @@ apscheduler==3.10.4
 stripe==8.0.0
 reportlab==4.1.0
 cloudscraper==1.2.71
+feedparser==6.0.11
