@@ -1,16 +1,18 @@
 """
-Auto-scheduler — runs competitor scans every 12 hours.
+Auto-scheduler — scans every 12 hours + weekly digest every Monday.
 """
 import logging
+from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
-from app.models.models import Competitor, Snapshot, Change, Report
+from app.models.models import Competitor, Snapshot, Change, Report, User
 from app.services.scraper import fetch_page, extract_content, compute_content_hash
 from app.services.change_detector import detect_changes
 from app.services.ai_analyst import generate_brief
-from app.services.email_service import send_change_alert
+from app.services.email_service import send_change_alert, send_weekly_digest
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
@@ -87,11 +89,66 @@ async def _scan_single(comp, db):
             logger.error(f"Error: {comp.name}/{page_type}: {e}")
     return changes_found
 
+
+async def send_weekly_digest_job():
+    """Collect all changes from the past 7 days and send digest email."""
+    logger.info("=== WEEKLY DIGEST STARTED ===")
+    async with AsyncSessionLocal() as db:
+        try:
+            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+            
+            result = await db.execute(
+                select(Change, Competitor.name)
+                .join(Competitor)
+                .where(Change.detected_at >= week_ago)
+                .order_by(Change.significance.desc())
+            )
+            rows = result.all()
+            
+            if not rows:
+                logger.info("No changes this week - skipping digest")
+                return
+            
+            changes_by_competitor = {}
+            total_changes = 0
+            
+            for change, comp_name in rows:
+                total_changes += 1
+                if comp_name not in changes_by_competitor:
+                    changes_by_competitor[comp_name] = {
+                        "count": 0,
+                        "max_significance": 0,
+                        "top_change": "",
+                    }
+                changes_by_competitor[comp_name]["count"] += 1
+                if change.significance > changes_by_competitor[comp_name]["max_significance"]:
+                    changes_by_competitor[comp_name]["max_significance"] = change.significance
+                    changes_by_competitor[comp_name]["top_change"] = change.summary or ""
+            
+            # Count briefs
+            brief_result = await db.execute(
+                select(Report).where(Report.created_at >= week_ago)
+            )
+            total_briefs = len(brief_result.scalars().all())
+            
+            await send_weekly_digest(changes_by_competitor, total_changes, total_briefs)
+            logger.info(f"=== WEEKLY DIGEST SENT: {total_changes} changes ===")
+            
+        except Exception as e:
+            logger.error(f"Weekly digest failed: {e}")
+
+
 def start_scheduler(interval_hours=12):
+    # Auto-scan every 12 hours
     scheduler.add_job(scan_all_users, trigger=IntervalTrigger(hours=interval_hours),
         id="auto_scan", name="Auto-scan", replace_existing=True)
+    
+    # Weekly digest every Monday at 8 AM UTC
+    scheduler.add_job(send_weekly_digest_job, trigger=CronTrigger(day_of_week='mon', hour=8),
+        id="weekly_digest", name="Weekly digest", replace_existing=True)
+    
     scheduler.start()
-    logger.info(f"Scheduler started - scanning every {interval_hours} hours")
+    logger.info(f"Scheduler started - scan every {interval_hours}h, weekly digest Monday 8AM UTC")
 
 def stop_scheduler():
     if scheduler.running:
