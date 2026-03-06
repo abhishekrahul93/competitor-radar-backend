@@ -1,194 +1,185 @@
 """
-Production web scraper — fetches and extracts structured content from competitor pages.
+Smart scraper — handles JS-protected sites with cloudscraper + fallback.
 """
 import httpx
-from bs4 import BeautifulSoup
+import cloudscraper
 import hashlib
-import re
+import json
+import logging
 import asyncio
 import random
-import logging
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
+]
 
-
-async def fetch_page(url: str, timeout: int = 30) -> dict:
-    """Fetch a page with async HTTP client."""
-    try:
-        await asyncio.sleep(random.uniform(1.0, 2.5))
-        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
-            response = await client.get(url, headers=HEADERS)
-            response.raise_for_status()
-            return {"success": True, "html": response.text, "status": response.status_code, "url": str(response.url)}
-    except Exception as e:
-        logger.error(f"Fetch failed for {url}: {e}")
-        return {"success": False, "error": str(e), "url": url}
-
-
-def extract_content(html: str, page_type: str = "homepage") -> dict:
-    """Extract structured content based on page type."""
-    soup = BeautifulSoup(html, "html.parser")
+async def fetch_page(url, timeout=30):
+    """Try httpx first, fall back to cloudscraper for JS-protected sites."""
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
     
-    # Remove noise
-    for tag in soup(["script", "style", "nav", "footer", "iframe", "noscript", "header"]):
+    # Try httpx first (async, fast)
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout, headers=headers) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            html = response.text
+            
+            # Check if we got real content or a JS challenge
+            if len(html) > 500 and "<body" in html.lower():
+                soup = BeautifulSoup(html, "lxml")
+                text = soup.get_text(strip=True)
+                if len(text) > 100:
+                    logger.info(f"httpx success: {url}")
+                    return {"success": True, "html": html, "method": "httpx"}
+            
+            logger.info(f"httpx got thin content for {url}, trying cloudscraper")
+    except Exception as e:
+        logger.info(f"httpx failed for {url}: {e}, trying cloudscraper")
+    
+    # Fallback to cloudscraper (handles Cloudflare, JS challenges)
+    try:
+        scraper = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "mobile": False})
+        scraper.headers.update(headers)
+        
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, lambda: scraper.get(url, timeout=timeout))
+        response.raise_for_status()
+        html = response.text
+        
+        if len(html) > 200:
+            logger.info(f"cloudscraper success: {url}")
+            return {"success": True, "html": html, "method": "cloudscraper"}
+    except Exception as e:
+        logger.error(f"cloudscraper failed for {url}: {e}")
+    
+    # Final fallback — basic httpx without fancy headers
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+            response = await client.get(url)
+            return {"success": True, "html": response.text, "method": "basic"}
+    except Exception as e:
+        logger.error(f"All methods failed for {url}: {e}")
+        return {"success": False, "html": "", "error": str(e)}
+
+
+def extract_content(html, page_type):
+    """Extract structured content from HTML."""
+    soup = BeautifulSoup(html, "lxml")
+    
+    # Remove scripts and styles
+    for tag in soup(["script", "style", "nav", "footer", "iframe", "noscript"]):
         tag.decompose()
     
-    extractors = {
-        "homepage": _extract_homepage,
-        "pricing": _extract_pricing,
-        "careers": _extract_careers,
-        "docs": _extract_general,
+    content = {
+        "title": "",
+        "meta_description": "",
+        "headings": [],
+        "paragraphs": [],
+        "links": [],
+        "images": [],
+        "full_text": "",
+        "ctas": [],
     }
     
-    extractor = extractors.get(page_type, _extract_general)
-    data = extractor(soup)
-    data["page_type"] = page_type
-    return data
-
-
-def _extract_homepage(soup):
-    title = soup.find("title")
-    meta = soup.find("meta", attrs={"name": "description"})
+    # Title
+    title_tag = soup.find("title")
+    content["title"] = title_tag.get_text(strip=True) if title_tag else ""
     
-    headings = []
+    # Meta description
+    meta = soup.find("meta", attrs={"name": "description"})
+    content["meta_description"] = meta.get("content", "") if meta else ""
+    
+    # Headings
     for level in ["h1", "h2", "h3"]:
         for h in soup.find_all(level):
             text = h.get_text(strip=True)
-            if text and 3 < len(text) < 300:
-                headings.append({"level": level, "text": text})
+            if text and len(text) > 2:
+                content["headings"].append({"level": level, "text": text[:200]})
     
-    messages = []
+    # Paragraphs
     for p in soup.find_all("p"):
         text = p.get_text(strip=True)
-        if 30 < len(text) < 500:
-            messages.append(text)
+        if text and len(text) > 20:
+            content["paragraphs"].append(text[:500])
     
-    ctas = []
-    for btn in soup.find_all(["button", "a"]):
-        text = btn.get_text(strip=True)
-        if text and len(text) < 50:
-            keywords = ["start", "try", "sign up", "get started", "demo", "free", "pricing", "buy", "subscribe"]
-            if any(k in text.lower() for k in keywords):
-                ctas.append(text)
+    # CTAs (buttons and links with action words)
+    cta_words = ["sign up", "get started", "try free", "start", "buy", "subscribe", "demo", "pricing", "contact"]
+    for tag in soup.find_all(["a", "button"]):
+        text = tag.get_text(strip=True).lower()
+        if any(w in text for w in cta_words):
+            content["ctas"].append(tag.get_text(strip=True)[:100])
     
-    full_text = soup.get_text(separator="\n", strip=True)[:10000]
+    # Page-type specific extraction
+    if page_type == "pricing":
+        content["pricing_data"] = extract_pricing(soup)
+    elif page_type == "careers":
+        content["jobs_data"] = extract_jobs(soup)
     
-    return {
-        "title": title.get_text(strip=True) if title else "",
-        "meta_description": meta.get("content", "") if meta else "",
-        "headings": headings,
-        "key_messages": messages[:20],
-        "cta_buttons": list(set(ctas)),
-        "full_text": full_text,
-    }
+    # Full text
+    content["full_text"] = soup.get_text(separator=" ", strip=True)[:10000]
+    
+    return content
 
 
-def _extract_pricing(soup):
-    title = soup.find("title")
+def extract_pricing(soup):
+    """Extract pricing information."""
+    pricing = {"plans": [], "prices": [], "features": []}
     
-    # Find prices
-    price_pattern = re.compile(r'\$\d[\d,]*\.?\d*(?:\s*/\s*\w+)?')
-    prices = []
-    for el in soup.find_all(string=price_pattern):
-        found = price_pattern.findall(el)
-        prices.extend(found)
-    prices = list(set(prices))
+    price_keywords = ["$", "€", "£", "/mo", "/month", "/year", "free", "starter", "pro", "enterprise", "business", "team"]
     
-    # Plan names
-    plans = []
-    for h in soup.find_all(["h2", "h3", "h4"]):
-        text = h.get_text(strip=True)
-        if text and len(text) < 60:
-            plans.append(text)
+    for el in soup.find_all(["div", "section", "span", "p", "h2", "h3", "h4"]):
+        text = el.get_text(strip=True)
+        if any(k in text.lower() for k in price_keywords) and len(text) < 200:
+            if "$" in text or "€" in text or "£" in text:
+                pricing["prices"].append(text[:100])
+            elif any(p in text.lower() for p in ["free", "starter", "pro", "enterprise", "business", "team", "basic"]):
+                pricing["plans"].append(text[:100])
     
-    # Features
-    features = []
-    for ul in soup.find_all("ul"):
-        items = [li.get_text(strip=True) for li in ul.find_all("li") if li.get_text(strip=True) and len(li.get_text(strip=True)) < 200]
-        if 2 <= len(items) <= 30:
-            features.append(items)
-    
-    full_text = soup.get_text(separator="\n", strip=True)[:10000]
-    
-    return {
-        "title": title.get_text(strip=True) if title else "",
-        "prices": prices,
-        "plans": plans,
-        "features": features,
-        "full_text": full_text,
-    }
+    return pricing
 
 
-def _extract_careers(soup):
-    title = soup.find("title")
+def extract_jobs(soup):
+    """Extract job listings."""
+    jobs = {"titles": [], "departments": [], "locations": []}
     
-    job_keywords = ["engineer", "developer", "designer", "manager", "analyst", "scientist",
-                    "lead", "director", "head of", "vp ", "architect", "specialist", "coordinator"]
+    job_keywords = ["engineer", "developer", "designer", "manager", "analyst", "scientist", "lead", "director", "head of", "vp of"]
     
-    jobs = []
-    seen = set()
     for el in soup.find_all(["h2", "h3", "h4", "a", "li", "div"]):
         text = el.get_text(strip=True)
-        if text and 10 < len(text) < 150 and text not in seen:
-            if any(k in text.lower() for k in job_keywords):
-                href = el.get("href", "")
-                jobs.append({"title": text, "url": href})
-                seen.add(text)
+        if any(k in text.lower() for k in job_keywords) and 5 < len(text) < 150:
+            jobs["titles"].append(text[:100])
     
-    departments = set()
-    dept_keywords = ["engineering", "product", "design", "marketing", "sales", "operations",
-                     "data", "machine learning", "ai", "research", "finance", "legal", "people"]
-    for el in soup.find_all(["h2", "h3", "span"]):
-        text = el.get_text(strip=True).lower()
-        for d in dept_keywords:
-            if d in text and len(text) < 50:
-                departments.add(text)
+    dept_keywords = ["engineering", "product", "design", "marketing", "sales", "operations", "data", "research"]
+    for el in soup.find_all(["h2", "h3", "span", "div"]):
+        text = el.get_text(strip=True)
+        if any(k in text.lower() for k in dept_keywords) and len(text) < 50:
+            jobs["departments"].append(text[:50])
     
-    full_text = soup.get_text(separator="\n", strip=True)[:10000]
-    
-    return {
-        "title": title.get_text(strip=True) if title else "",
-        "job_listings": jobs,
-        "departments": list(departments),
-        "job_count": len(jobs),
-        "full_text": full_text,
-    }
+    return jobs
 
 
-def _extract_general(soup):
-    title = soup.find("title")
-    headings = []
-    for level in ["h1", "h2", "h3"]:
-        for h in soup.find_all(level):
-            text = h.get_text(strip=True)
-            if text and len(text) < 300:
-                headings.append({"level": level, "text": text})
-    
-    full_text = soup.get_text(separator="\n", strip=True)[:10000]
-    
-    return {
-        "title": title.get_text(strip=True) if title else "",
-        "headings": headings,
-        "full_text": full_text,
-    }
-
-
-def compute_content_hash(content: dict) -> str:
-    """Hash meaningful content for change detection."""
-    parts = [
-        str(content.get("title", "")),
-        str(content.get("headings", "")),
-        str(content.get("prices", "")),
-        str(content.get("plans", "")),
-        str(content.get("job_listings", "")),
-        str(content.get("cta_buttons", "")),
-        str(content.get("meta_description", "")),
-    ]
-    combined = "|".join(parts)
-    return hashlib.sha256(combined.encode()).hexdigest()
+def compute_content_hash(content):
+    """Create a hash of the content for change detection."""
+    key_data = json.dumps({
+        "title": content.get("title", ""),
+        "headings": content.get("headings", []),
+        "paragraphs": content.get("paragraphs", [])[:10],
+        "ctas": content.get("ctas", []),
+        "pricing_data": content.get("pricing_data", {}),
+        "jobs_data": content.get("jobs_data", {}),
+    }, sort_keys=True)
+    return hashlib.sha256(key_data.encode()).hexdigest()
