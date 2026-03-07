@@ -1,6 +1,5 @@
 ﻿import httpx
 import feedparser
-import asyncio
 import re
 import os
 import json
@@ -11,6 +10,12 @@ from openai import AsyncOpenAI
 
 def _clean_html(text: str) -> str:
     return re.sub(r'<[^>]+>', '', text).strip()
+
+
+def _strip_tz(dt):
+    if dt and dt.tzinfo:
+        return dt.replace(tzinfo=None)
+    return dt
 
 
 async def _fetch_twitter_api(handle: str, bearer_token: str) -> list:
@@ -36,7 +41,7 @@ async def _fetch_twitter_api(handle: str, bearer_token: str) -> list:
                     "content": tweet["text"],
                     "post_url": f"https://x.com/{handle}/status/{tweet['id']}",
                     "author": f"@{handle}",
-                    "posted_at": datetime.fromisoformat(tweet["created_at"].replace("Z", "+00:00")),
+                    "posted_at": _strip_tz(datetime.fromisoformat(tweet["created_at"].replace("Z", "+00:00"))),
                     "engagement": tweet.get("public_metrics", {})
                 })
     except Exception as e:
@@ -63,11 +68,11 @@ async def _fetch_twitter_nitter(handle: str) -> list:
                     for entry in feed.entries[:10]:
                         try:
                             if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                                posted_at = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                                posted_at = datetime(*entry.published_parsed[:6])
                             else:
-                                posted_at = datetime.now(timezone.utc)
+                                posted_at = datetime.utcnow()
                         except Exception:
-                            posted_at = datetime.now(timezone.utc)
+                            posted_at = datetime.utcnow()
                         posts.append({
                             "post_id": entry.get("id", entry.link),
                             "platform": "twitter",
@@ -107,13 +112,13 @@ BROWSER_HEADERS = {
 def _parse_reddit_rss_entry(entry) -> dict:
     try:
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
-            posted_at = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+            posted_at = datetime(*entry.published_parsed[:6])
         elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-            posted_at = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+            posted_at = datetime(*entry.updated_parsed[:6])
         else:
-            posted_at = datetime.now(timezone.utc)
+            posted_at = datetime.utcnow()
     except Exception:
-        posted_at = datetime.now(timezone.utc)
+        posted_at = datetime.utcnow()
     return {
         "post_id": entry.get("id", entry.get("link", "")),
         "platform": "reddit",
@@ -155,7 +160,7 @@ async def _try_reddit_json(keywords: str) -> list:
                         "content": f"{p['title']}\n{p.get('selftext', '')[:400]}".strip(),
                         "post_url": f"https://reddit.com{p['permalink']}",
                         "author": f"u/{p.get('author', 'unknown')}",
-                        "posted_at": datetime.fromtimestamp(p["created_utc"], tz=timezone.utc),
+                        "posted_at": _strip_tz(datetime.fromtimestamp(p["created_utc"], tz=timezone.utc)),
                         "engagement": {"upvotes": p.get("ups", 0), "comments": p.get("num_comments", 0)}
                     })
                 if posts:
@@ -227,32 +232,46 @@ async def scan_competitor_social(competitor, db) -> int:
 
     new_count = 0
     for post_data in all_posts:
-        existing = await db.execute(
-            select(SocialPost).where(
-                SocialPost.platform == post_data["platform"],
-                SocialPost.post_id == str(post_data["post_id"])
+        try:
+            existing = await db.execute(
+                select(SocialPost).where(
+                    SocialPost.platform == post_data["platform"],
+                    SocialPost.post_id == str(post_data["post_id"])
+                )
             )
-        )
-        if existing.scalar_one_or_none():
+            if existing.scalar_one_or_none():
+                continue
+            ai = await analyze_post_with_ai(post_data["content"], competitor.name)
+            posted_at = post_data.get("posted_at")
+            if posted_at and hasattr(posted_at, 'tzinfo') and posted_at.tzinfo:
+                posted_at = posted_at.replace(tzinfo=None)
+            post = SocialPost(
+                competitor_id=competitor.id,
+                platform=post_data["platform"],
+                post_id=str(post_data["post_id"]),
+                post_url=post_data.get("post_url"),
+                content=post_data.get("content"),
+                author=post_data.get("author"),
+                posted_at=posted_at,
+                engagement=post_data.get("engagement", {}),
+                sentiment=ai.get("sentiment", "neutral"),
+                is_announcement=ai.get("is_announcement", False),
+                ai_summary=ai.get("summary", "")
+            )
+            db.add(post)
+            new_count += 1
+        except Exception as e:
+            print(f"[Social] Error saving post: {e}")
+            await db.rollback()
             continue
-        ai = await analyze_post_with_ai(post_data["content"], competitor.name)
-        post = SocialPost(
-            competitor_id=competitor.id,
-            platform=post_data["platform"],
-            post_id=str(post_data["post_id"]),
-            post_url=post_data.get("post_url"),
-            content=post_data.get("content"),
-            author=post_data.get("author"),
-            posted_at=post_data.get("posted_at"),
-            engagement=post_data.get("engagement", {}),
-            sentiment=ai.get("sentiment", "neutral"),
-            is_announcement=ai.get("is_announcement", False),
-            ai_summary=ai.get("summary", "")
-        )
-        db.add(post)
-        new_count += 1
+
     if new_count:
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            print(f"[Social] Commit error: {e}")
+            await db.rollback()
+
     print(f"[Social] {competitor.name}: {new_count} new posts saved")
     return new_count
 
@@ -263,7 +282,7 @@ async def seed_demo_social_posts(competitor, db) -> int:
 
     name = competitor.name
     handle = (competitor.twitter_handle or name.lower().replace(" ", "")).strip().lstrip("@")
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     twitter_templates = [
         {"content": f"Excited to announce our latest AI writing features! Check out what's new at {name}. We've completely redesigned the workflow experience.", "sentiment": "positive", "is_announcement": True, "summary": f"{name} announced new AI writing features and redesigned workflow", "engagement": {"likes": random.randint(50, 500), "retweets": random.randint(10, 100), "replies": random.randint(5, 50)}},
@@ -318,6 +337,11 @@ async def seed_demo_social_posts(competitor, db) -> int:
         new_count += 1
 
     if new_count:
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            print(f"[Demo] Commit error: {e}")
+            await db.rollback()
+
     print(f"[Demo] Seeded {new_count} demo posts for {competitor.name}")
     return new_count
