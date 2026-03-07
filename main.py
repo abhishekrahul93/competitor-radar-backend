@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from app.core.database import engine, Base
-from app.api import competitors, scanning, changes, reports, auth, demo, payments, export, seo, social, chat
+from app.api import competitors, scanning, changes, reports, auth, demo, payments, export, seo, social, chat, teams
 from app.services.scheduler import start_scheduler, stop_scheduler
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +17,8 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_webhook TEXT DEFAULT ''",
             "ALTER TABLE competitors ADD COLUMN IF NOT EXISTS twitter_handle VARCHAR",
             "ALTER TABLE competitors ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR",
-            "ALTER TABLE competitors ADD COLUMN IF NOT EXISTS reddit_keywords VARCHAR"
+            "ALTER TABLE competitors ADD COLUMN IF NOT EXISTS reddit_keywords VARCHAR",
+            "ALTER TABLE competitors ADD COLUMN IF NOT EXISTS team_id INTEGER"
         ]:
             try:
                 await conn.execute(text(alter))
@@ -52,6 +53,7 @@ app.include_router(export.router, prefix="/api/export", tags=["Export"])
 app.include_router(seo.router, prefix="/api/seo", tags=["SEO"])
 app.include_router(social.router, prefix="/api", tags=["Social"])
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
+app.include_router(teams.router, prefix="/api", tags=["Teams"])
 @app.get("/")
 async def root():
     return {"app": "Competitor Radar AI", "status": "running"}
