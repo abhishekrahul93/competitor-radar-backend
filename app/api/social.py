@@ -340,3 +340,20 @@ async def get_social_settings(
             status_code=500,
             content={"error": error_msg, "traceback": tb}
         )
+@router.delete("/cleanup-spam")
+async def cleanup_spam(db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    try:
+        from sqlalchemy import or_, func
+        spam_words = ['onlyfans', 'porn', 'xxx', 'nsfw', 'nude', 'naked', 'brazzers', 'pussy', 'cock', 'hentai', 'milf', 'escort', 'cam girl', 'adult content', 'removed by reddit']
+        conditions = [func.lower(SocialPost.content).contains(word) for word in spam_words]
+        result = await db.execute(select(SocialPost).where(or_(*conditions)))
+        spam_posts = result.scalars().all()
+        count = len(spam_posts)
+        for post in spam_posts:
+            await db.delete(post)
+        if count:
+            await db.commit()
+        return {"message": f"Deleted {count} spam posts"}
+    except Exception as e:
+        import traceback
+        return JSONResponse(status_code=500, content={"error": str(e), "traceback": traceback.format_exc()})
