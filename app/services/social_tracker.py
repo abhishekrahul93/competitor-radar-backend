@@ -18,6 +18,32 @@ def _strip_tz(dt):
     return dt
 
 
+SPAM_KEYWORDS = [
+    'onlyfans', 'porn', 'xxx', 'nsfw', 'nude', 'naked', 'sex worker',
+    'escort', 'cam girl', 'adult content', 'brazzers', 'pussy', 'cock',
+    'dick pic', 'boobs', 'fap', 'hentai', 'milf', 'hookup',
+    'crypto airdrop', 'free bitcoin', 'giveaway winner', 'dm me for',
+    'follow for follow', 'f4f', 'sub4sub', 'click my link', 'check my bio',
+    'make money fast', 'work from home scam', 'forex signal', 'binary option',
+    'penis enlargement', 'weight loss pill', 'buy followers', 'cheap viagra',
+    'casino bonus', 'bet365', 'gambling', 'slot machine',
+]
+
+
+def _is_spam(content: str) -> bool:
+    if not content:
+        return False
+    lower = content.lower()
+    spam_count = sum(1 for kw in SPAM_KEYWORDS if kw in lower)
+    if spam_count >= 2:
+        return True
+    if len(content) < 15:
+        return True
+    if content.count('http') > 5:
+        return True
+    return False
+
+
 async def _fetch_twitter_api(handle: str, bearer_token: str) -> list:
     posts = []
     try:
@@ -232,6 +258,9 @@ async def scan_competitor_social(competitor, db) -> int:
 
     new_count = 0
     for post_data in all_posts:
+        if _is_spam(post_data.get("content", "")):
+            print(f"[Social] Skipped spam post: {post_data.get('post_id')}")
+            continue
         try:
             existing = await db.execute(
                 select(SocialPost).where(
