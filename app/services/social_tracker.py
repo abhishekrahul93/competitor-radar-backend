@@ -13,8 +13,6 @@ def _clean_html(text: str) -> str:
     return re.sub(r'<[^>]+>', '', text).strip()
 
 
-# ── Twitter fetching ─────────────────────────────────────────────
-
 async def _fetch_twitter_api(handle: str, bearer_token: str) -> list:
     posts = []
     try:
@@ -24,30 +22,23 @@ async def _fetch_twitter_api(handle: str, bearer_token: str) -> list:
                 headers={"Authorization": f"Bearer {bearer_token}"}
             )
             if user_resp.status_code != 200:
-                print(f"[Twitter API] User lookup failed for @{handle}: {user_resp.status_code}")
                 return posts
             user_id = user_resp.json()["data"]["id"]
             tweets_resp = await client.get(
                 f"https://api.twitter.com/2/users/{user_id}/tweets",
                 headers={"Authorization": f"Bearer {bearer_token}"},
-                params={
-                    "max_results": 10,
-                    "tweet.fields": "created_at,public_metrics,text",
-                    "exclude": "retweets,replies"
-                }
+                params={"max_results": 10, "tweet.fields": "created_at,public_metrics,text", "exclude": "retweets,replies"}
             )
             for tweet in tweets_resp.json().get("data", []):
                 posts.append({
                     "post_id": tweet["id"],
                     "platform": "twitter",
                     "content": tweet["text"],
-                    "post_url": f"https://twitter.com/{handle}/status/{tweet['id']}",
+                    "post_url": f"https://x.com/{handle}/status/{tweet['id']}",
                     "author": f"@{handle}",
                     "posted_at": datetime.fromisoformat(tweet["created_at"].replace("Z", "+00:00")),
                     "engagement": tweet.get("public_metrics", {})
                 })
-            if posts:
-                print(f"[Twitter API] Found {len(posts)} tweets for @{handle}")
     except Exception as e:
         print(f"[Twitter API] Error for @{handle}: {e}")
     return posts
@@ -81,20 +72,16 @@ async def _fetch_twitter_nitter(handle: str) -> list:
                             "post_id": entry.get("id", entry.link),
                             "platform": "twitter",
                             "content": _clean_html(entry.get("summary", entry.get("title", ""))),
-                            "post_url": re.sub(r'https?://[^/]+', 'https://twitter.com', entry.link),
+                            "post_url": re.sub(r'https?://[^/]+', 'https://x.com', entry.link),
                             "author": f"@{handle}",
                             "posted_at": posted_at,
                             "engagement": {}
                         })
                     if posts:
-                        print(f"[Nitter] Found {len(posts)} tweets via {instance}")
                         return posts
-                else:
-                    print(f"[Nitter] {instance} returned {resp.status_code}")
         except Exception as e:
             print(f"[Nitter] {instance} failed: {e}")
             continue
-    print(f"[Nitter] All instances failed for @{handle}")
     return []
 
 
@@ -110,14 +97,10 @@ async def fetch_twitter_posts(competitor) -> list:
     return await _fetch_twitter_nitter(handle)
 
 
-# ── Reddit fetching ──────────────────────────────────────────────
-
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
 }
 
 
@@ -131,17 +114,11 @@ def _parse_reddit_rss_entry(entry) -> dict:
             posted_at = datetime.now(timezone.utc)
     except Exception:
         posted_at = datetime.now(timezone.utc)
-
-    content = _clean_html(entry.get("summary", entry.get("title", "")))
-    title = entry.get("title", "")
-    link = entry.get("link", "")
-    post_id = entry.get("id", link)
-
     return {
-        "post_id": post_id,
+        "post_id": entry.get("id", entry.get("link", "")),
         "platform": "reddit",
-        "content": f"{title}\n{content[:400]}".strip(),
-        "post_url": link,
+        "content": f"{entry.get('title', '')}\n{_clean_html(entry.get('summary', ''))[:400]}".strip(),
+        "post_url": entry.get("link", ""),
         "author": entry.get("author", "u/unknown"),
         "posted_at": posted_at,
         "engagement": {}
@@ -149,42 +126,25 @@ def _parse_reddit_rss_entry(entry) -> dict:
 
 
 async def _try_reddit_rss(keywords: str) -> list:
-    """Method 1: Reddit search RSS feed."""
     try:
-        async with httpx.AsyncClient(
-            headers=BROWSER_HEADERS,
-            timeout=15,
-            follow_redirects=True
-        ) as client:
-            url = f"https://www.reddit.com/search.rss?q={keywords}&sort=new&limit=10&t=week"
-            resp = await client.get(url)
+        async with httpx.AsyncClient(headers=BROWSER_HEADERS, timeout=15, follow_redirects=True) as client:
+            resp = await client.get(f"https://www.reddit.com/search.rss?q={keywords}&sort=new&limit=10&t=week")
             if resp.status_code == 200 and resp.text.strip():
                 feed = feedparser.parse(resp.text)
                 posts = [_parse_reddit_rss_entry(e) for e in feed.entries[:10]]
                 if posts:
-                    print(f"[Reddit RSS] Found {len(posts)} posts for '{keywords}'")
                     return posts
-            else:
-                print(f"[Reddit RSS] Status {resp.status_code} for '{keywords}'")
     except Exception as e:
-        print(f"[Reddit RSS] Error for '{keywords}': {e}")
+        print(f"[Reddit RSS] Error: {e}")
     return []
 
 
 async def _try_reddit_json(keywords: str) -> list:
-    """Method 2: Reddit JSON API with browser headers."""
     try:
         headers = BROWSER_HEADERS.copy()
         headers["Accept"] = "application/json"
-        async with httpx.AsyncClient(
-            headers=headers,
-            timeout=15,
-            follow_redirects=True
-        ) as client:
-            resp = await client.get(
-                "https://www.reddit.com/search.json",
-                params={"q": keywords, "sort": "new", "limit": 10, "t": "week"}
-            )
+        async with httpx.AsyncClient(headers=headers, timeout=15, follow_redirects=True) as client:
+            resp = await client.get("https://www.reddit.com/search.json", params={"q": keywords, "sort": "new", "limit": 10, "t": "week"})
             if resp.status_code == 200:
                 posts = []
                 for item in resp.json().get("data", {}).get("children", []):
@@ -196,77 +156,31 @@ async def _try_reddit_json(keywords: str) -> list:
                         "post_url": f"https://reddit.com{p['permalink']}",
                         "author": f"u/{p.get('author', 'unknown')}",
                         "posted_at": datetime.fromtimestamp(p["created_utc"], tz=timezone.utc),
-                        "engagement": {
-                            "upvotes": p.get("ups", 0),
-                            "comments": p.get("num_comments", 0)
-                        }
+                        "engagement": {"upvotes": p.get("ups", 0), "comments": p.get("num_comments", 0)}
                     })
                 if posts:
-                    print(f"[Reddit JSON] Found {len(posts)} posts for '{keywords}'")
                     return posts
-            else:
-                print(f"[Reddit JSON] Status {resp.status_code} for '{keywords}'")
     except Exception as e:
-        print(f"[Reddit JSON] Error for '{keywords}': {e}")
+        print(f"[Reddit JSON] Error: {e}")
     return []
-
-
-async def _try_reddit_subreddits(keywords: str) -> list:
-    """Method 3: Search within specific tech subreddits."""
-    subreddits = ["technology", "artificial", "SaaS", "startups", "MachineLearning", "software"]
-    posts = []
-    for sub in subreddits:
-        try:
-            async with httpx.AsyncClient(
-                headers=BROWSER_HEADERS,
-                timeout=10,
-                follow_redirects=True
-            ) as client:
-                url = f"https://www.reddit.com/r/{sub}/search.rss?q={keywords}&restrict_sr=on&sort=new&t=month&limit=5"
-                resp = await client.get(url)
-                if resp.status_code == 200 and resp.text.strip():
-                    feed = feedparser.parse(resp.text)
-                    for entry in feed.entries[:5]:
-                        posts.append(_parse_reddit_rss_entry(entry))
-        except Exception as e:
-            print(f"[Reddit r/{sub}] Error: {e}")
-            continue
-    if posts:
-        print(f"[Reddit Subreddit] Found {len(posts)} posts for '{keywords}'")
-    return posts
 
 
 async def fetch_reddit_mentions(competitor) -> list:
     keywords = (competitor.reddit_keywords or competitor.name or "").strip()
     if not keywords:
         return []
-
-    # Try each method in order
     posts = await _try_reddit_rss(keywords)
     if posts:
         return posts
-
     posts = await _try_reddit_json(keywords)
     if posts:
         return posts
-
-    posts = await _try_reddit_subreddits(keywords)
-    if posts:
-        return posts
-
     print(f"[Reddit] All methods failed for '{keywords}'")
     return []
 
 
-# ── AI analysis ──────────────────────────────────────────────────
-
 async def analyze_post_with_ai(content: str, competitor_name: str) -> dict:
-    default = {
-        "sentiment": "neutral",
-        "is_announcement": False,
-        "summary": content[:120],
-        "significance": "low"
-    }
+    default = {"sentiment": "neutral", "is_announcement": False, "summary": content[:120], "significance": "low"}
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return default
@@ -275,20 +189,8 @@ async def analyze_post_with_ai(content: str, competitor_name: str) -> dict:
         response = await client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are a competitive intelligence analyst. Respond ONLY with valid JSON, no markdown."
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f'Analyze this post about {competitor_name}:\n\n'
-                        f'"{content[:600]}"\n\n'
-                        f'Return JSON with keys: sentiment (positive/negative/neutral), '
-                        f'is_announcement (bool), summary (string max 120 chars), '
-                        f'significance (high/medium/low)'
-                    )
-                }
+                {"role": "system", "content": "You are a competitive intelligence analyst. Respond ONLY with valid JSON, no markdown."},
+                {"role": "user", "content": f'Analyze this post about {competitor_name}:\n\n"{content[:600]}"\n\nReturn JSON: sentiment (positive/negative/neutral), is_announcement (bool), summary (max 120 chars), significance (high/medium/low)'}
             ],
             max_tokens=150,
             temperature=0.3
@@ -301,8 +203,6 @@ async def analyze_post_with_ai(content: str, competitor_name: str) -> dict:
         return default
 
 
-# ── Main scan function ───────────────────────────────────────────
-
 async def scan_competitor_social(competitor, db) -> int:
     from app.models.models import SocialPost
     from sqlalchemy import select
@@ -313,14 +213,12 @@ async def scan_competitor_social(competitor, db) -> int:
 
     print(f"[Social] {competitor.name}: {len(twitter_posts)} twitter, {len(reddit_posts)} reddit posts found")
 
-    # If no real posts found from any source, auto-seed demo data
     if not all_posts:
-        existing_count = await db.execute(
-            select(SocialPost).where(
-                SocialPost.competitor_id == competitor.id
-            ).limit(1)
+        existing_result = await db.execute(
+            select(SocialPost).where(SocialPost.competitor_id == competitor.id)
         )
-        if not existing_count.scalar_one_or_none():
+        existing_posts = existing_result.scalars().all()
+        if len(existing_posts) < 5:
             print(f"[Social] No live data for {competitor.name}, seeding demo posts...")
             return await seed_demo_social_posts(competitor, db)
         else:
@@ -337,9 +235,7 @@ async def scan_competitor_social(competitor, db) -> int:
         )
         if existing.scalar_one_or_none():
             continue
-
         ai = await analyze_post_with_ai(post_data["content"], competitor.name)
-
         post = SocialPost(
             competitor_id=competitor.id,
             platform=post_data["platform"],
@@ -355,15 +251,11 @@ async def scan_competitor_social(competitor, db) -> int:
         )
         db.add(post)
         new_count += 1
-
     if new_count:
         await db.commit()
-
     print(f"[Social] {competitor.name}: {new_count} new posts saved")
     return new_count
 
-
-# ── Demo data seeding ────────────────────────────────────────────
 
 async def seed_demo_social_posts(competitor, db) -> int:
     from app.models.models import SocialPost
@@ -374,148 +266,58 @@ async def seed_demo_social_posts(competitor, db) -> int:
     now = datetime.now(timezone.utc)
 
     twitter_templates = [
-        {
-            "content": f"Excited to announce our latest AI writing features! Check out what's new at {name}. We've completely redesigned the workflow experience.",
-            "sentiment": "positive",
-            "is_announcement": True,
-            "summary": f"{name} announced new AI writing features and redesigned workflow",
-            "engagement": {"likes": random.randint(50, 500), "retweets": random.randint(10, 100), "replies": random.randint(5, 50)}
-        },
-        {
-            "content": f"Our team at {name} has been working hard on improving content quality. New language models are now live for all users!",
-            "sentiment": "positive",
-            "is_announcement": True,
-            "summary": f"{name} upgraded their language models for all users",
-            "engagement": {"likes": random.randint(100, 800), "retweets": random.randint(20, 200), "replies": random.randint(10, 80)}
-        },
-        {
-            "content": f"Thanks to our amazing community! {name} just crossed 1M+ users. We couldn't have done it without your feedback and support.",
-            "sentiment": "positive",
-            "is_announcement": True,
-            "summary": f"{name} celebrated reaching 1M+ users milestone",
-            "engagement": {"likes": random.randint(200, 1000), "retweets": random.randint(50, 300), "replies": random.randint(20, 100)}
-        },
-        {
-            "content": f"New pricing plans are coming next month. We're making {name} more accessible for startups and small teams. Stay tuned for details.",
-            "sentiment": "neutral",
-            "is_announcement": True,
-            "summary": f"{name} hinted at new pricing plans for startups",
-            "engagement": {"likes": random.randint(30, 200), "retweets": random.randint(5, 50), "replies": random.randint(15, 80)}
-        },
-        {
-            "content": f"We're hiring! {name} is looking for ML engineers, product designers, and developer advocates. Remote-friendly. Apply on our careers page.",
-            "sentiment": "neutral",
-            "is_announcement": False,
-            "summary": f"{name} is hiring ML engineers and designers, remote-friendly",
-            "engagement": {"likes": random.randint(40, 300), "retweets": random.randint(10, 80), "replies": random.randint(5, 30)}
-        },
+        {"content": f"Excited to announce our latest AI writing features! Check out what's new at {name}. We've completely redesigned the workflow experience.", "sentiment": "positive", "is_announcement": True, "summary": f"{name} announced new AI writing features and redesigned workflow", "engagement": {"likes": random.randint(50, 500), "retweets": random.randint(10, 100), "replies": random.randint(5, 50)}},
+        {"content": f"Our team at {name} has been working hard on improving content quality. New language models are now live for all users!", "sentiment": "positive", "is_announcement": True, "summary": f"{name} upgraded their language models for all users", "engagement": {"likes": random.randint(100, 800), "retweets": random.randint(20, 200), "replies": random.randint(10, 80)}},
+        {"content": f"Thanks to our amazing community! {name} just crossed 1M+ users. We couldn't have done it without your feedback and support.", "sentiment": "positive", "is_announcement": True, "summary": f"{name} celebrated reaching 1M+ users milestone", "engagement": {"likes": random.randint(200, 1000), "retweets": random.randint(50, 300), "replies": random.randint(20, 100)}},
+        {"content": f"New pricing plans are coming next month. We're making {name} more accessible for startups and small teams. Stay tuned for details.", "sentiment": "neutral", "is_announcement": True, "summary": f"{name} hinted at new pricing plans for startups", "engagement": {"likes": random.randint(30, 200), "retweets": random.randint(5, 50), "replies": random.randint(15, 80)}},
+        {"content": f"We're hiring! {name} is looking for ML engineers, product designers, and developer advocates. Remote-friendly.", "sentiment": "neutral", "is_announcement": False, "summary": f"{name} is hiring ML engineers and designers, remote-friendly", "engagement": {"likes": random.randint(40, 300), "retweets": random.randint(10, 80), "replies": random.randint(5, 30)}},
     ]
 
     reddit_templates = [
-        {
-            "content": f"Has anyone tried {name} recently? The new update is actually impressive\nI've been using it for blog posts and the quality has significantly improved compared to 6 months ago. The AI seems to understand context much better now.",
-            "sentiment": "positive",
-            "is_announcement": False,
-            "summary": f"Reddit user praised {name}'s recent quality improvements",
-            "engagement": {"upvotes": random.randint(20, 300), "comments": random.randint(10, 80)}
-        },
-        {
-            "content": f"{name} vs other AI writing tools - honest comparison\nI've tested {name} against 5 other tools for marketing copy. Here's my detailed breakdown of pros and cons for each use case.",
-            "sentiment": "neutral",
-            "is_announcement": False,
-            "summary": f"Detailed comparison of {name} vs competitors for marketing copy",
-            "engagement": {"upvotes": random.randint(50, 500), "comments": random.randint(30, 150)}
-        },
-        {
-            "content": f"Is {name} worth the price? Thinking of switching\nCurrently using ChatGPT for content but considering {name} for the templates and workflow features. Would love to hear experiences from current users.",
-            "sentiment": "neutral",
-            "is_announcement": False,
-            "summary": f"User asking about {name} value vs ChatGPT for content creation",
-            "engagement": {"upvotes": random.randint(10, 100), "comments": random.randint(20, 60)}
-        },
-        {
-            "content": f"{name} just raised a massive funding round\nSaw the news about {name}'s latest funding. Seems like they're planning big expansions into enterprise. Could be a threat to established players.",
-            "sentiment": "positive",
-            "is_announcement": True,
-            "summary": f"Discussion about {name}'s new funding round and enterprise plans",
-            "engagement": {"upvotes": random.randint(100, 600), "comments": random.randint(40, 200)}
-        },
-        {
-            "content": f"Disappointed with {name}'s customer support\nBeen waiting 5 days for a response about a billing issue. The product is great but the support needs serious improvement.",
-            "sentiment": "negative",
-            "is_announcement": False,
-            "summary": f"User complained about {name}'s slow customer support response",
-            "engagement": {"upvotes": random.randint(30, 200), "comments": random.randint(15, 70)}
-        },
+        {"content": f"Has anyone tried {name} recently? The new update is actually impressive. The AI seems to understand context much better now.", "sentiment": "positive", "is_announcement": False, "summary": f"Reddit user praised {name}'s recent quality improvements", "engagement": {"upvotes": random.randint(20, 300), "comments": random.randint(10, 80)}},
+        {"content": f"{name} vs other AI writing tools - honest comparison. Tested against 5 other tools for marketing copy.", "sentiment": "neutral", "is_announcement": False, "summary": f"Detailed comparison of {name} vs competitors for marketing copy", "engagement": {"upvotes": random.randint(50, 500), "comments": random.randint(30, 150)}},
+        {"content": f"Is {name} worth the price? Thinking of switching from ChatGPT for the templates and workflow features.", "sentiment": "neutral", "is_announcement": False, "summary": f"User asking about {name} value vs ChatGPT for content creation", "engagement": {"upvotes": random.randint(10, 100), "comments": random.randint(20, 60)}},
+        {"content": f"{name} just raised a massive funding round. Planning big expansions into enterprise. Could be a threat to established players.", "sentiment": "positive", "is_announcement": True, "summary": f"Discussion about {name}'s new funding round and enterprise plans", "engagement": {"upvotes": random.randint(100, 600), "comments": random.randint(40, 200)}},
+        {"content": f"Disappointed with {name}'s customer support. Been waiting 5 days for a response about a billing issue.", "sentiment": "negative", "is_announcement": False, "summary": f"User complained about {name}'s slow customer support response", "engagement": {"upvotes": random.randint(30, 200), "comments": random.randint(15, 70)}},
     ]
 
     new_count = 0
 
-    # Add 3-4 random twitter posts
-    selected_twitter = random.sample(twitter_templates, min(4, len(twitter_templates)))
-    for i, tmpl in enumerate(selected_twitter):
+    for i, tmpl in enumerate(random.sample(twitter_templates, 4)):
         post_id = f"demo_tw_{competitor.id}_{i}_{int(now.timestamp())}"
-
-        existing = await db.execute(
-            select(SocialPost).where(
-                SocialPost.platform == "twitter",
-                SocialPost.post_id == post_id
-            )
-        )
+        existing = await db.execute(select(SocialPost).where(SocialPost.platform == "twitter", SocialPost.post_id == post_id))
         if existing.scalar_one_or_none():
             continue
-
-        hours_ago = random.randint(1, 168)
         post = SocialPost(
-            competitor_id=competitor.id,
-            platform="twitter",
-            post_id=post_id,
-            post_url=f"https://twitter.com/{handle}/status/{random.randint(1000000000, 9999999999)}",
-            content=tmpl["content"],
-            author=f"@{handle}",
-            posted_at=now - timedelta(hours=hours_ago),
-            engagement=tmpl["engagement"],
-            sentiment=tmpl["sentiment"],
-            is_announcement=tmpl["is_announcement"],
-            ai_summary=tmpl["summary"]
+            competitor_id=competitor.id, platform="twitter", post_id=post_id,
+            post_url=f"https://x.com/{handle}/status/{random.randint(1000000000, 9999999999)}",
+            content=tmpl["content"], author=f"@{handle}",
+            posted_at=now - timedelta(hours=random.randint(1, 168)),
+            engagement=tmpl["engagement"], sentiment=tmpl["sentiment"],
+            is_announcement=tmpl["is_announcement"], ai_summary=tmpl["summary"]
         )
         db.add(post)
         new_count += 1
 
-    # Add 3-4 random reddit posts
-    selected_reddit = random.sample(reddit_templates, min(4, len(reddit_templates)))
-    for i, tmpl in enumerate(selected_reddit):
+    for i, tmpl in enumerate(random.sample(reddit_templates, 4)):
         post_id = f"demo_rd_{competitor.id}_{i}_{int(now.timestamp())}"
-
-        existing = await db.execute(
-            select(SocialPost).where(
-                SocialPost.platform == "reddit",
-                SocialPost.post_id == post_id
-            )
-        )
+        existing = await db.execute(select(SocialPost).where(SocialPost.platform == "reddit", SocialPost.post_id == post_id))
         if existing.scalar_one_or_none():
             continue
-
-        hours_ago = random.randint(1, 168)
-        subreddits = ["r/SaaS", "r/artificial", "r/technology", "r/startups", "r/MachineLearning"]
+        subs = ["r/SaaS", "r/artificial", "r/technology", "r/startups", "r/MachineLearning"]
         post = SocialPost(
-            competitor_id=competitor.id,
-            platform="reddit",
-            post_id=post_id,
-            post_url=f"https://reddit.com/{random.choice(subreddits)}/comments/{random.randint(100000, 999999)}",
+            competitor_id=competitor.id, platform="reddit", post_id=post_id,
+            post_url=f"https://reddit.com/{random.choice(subs)}/comments/{random.randint(100000, 999999)}",
             content=tmpl["content"],
             author=f"u/{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=8))}",
-            posted_at=now - timedelta(hours=hours_ago),
-            engagement=tmpl["engagement"],
-            sentiment=tmpl["sentiment"],
-            is_announcement=tmpl["is_announcement"],
-            ai_summary=tmpl["summary"]
+            posted_at=now - timedelta(hours=random.randint(1, 168)),
+            engagement=tmpl["engagement"], sentiment=tmpl["sentiment"],
+            is_announcement=tmpl["is_announcement"], ai_summary=tmpl["summary"]
         )
         db.add(post)
         new_count += 1
 
     if new_count:
         await db.commit()
-
     print(f"[Demo] Seeded {new_count} demo posts for {competitor.name}")
     return new_count
