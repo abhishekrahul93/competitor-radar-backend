@@ -11,6 +11,13 @@ from app.services.slack_service import send_test_message
 router = APIRouter(prefix="/slack", tags=["Slack"])
 
 
+def get_user_id(user):
+    """Get user ID whether user is a dict or object."""
+    if isinstance(user, dict):
+        return user.get("id") or user.get("user_id")
+    return getattr(user, "id", None)
+
+
 class WebhookRequest(BaseModel):
     webhook_url: str
 
@@ -38,9 +45,10 @@ async def save_webhook(req: WebhookRequest, user=Depends(get_current_user), db=D
     if req.webhook_url and not req.webhook_url.startswith("https://hooks.slack.com/"):
         raise HTTPException(status_code=400, detail="Invalid Slack webhook URL")
 
+    uid = get_user_id(user)
     await db.execute(
         text("UPDATE users SET slack_webhook = :url WHERE id = :uid"),
-        {"url": req.webhook_url, "uid": user.id},
+        {"url": req.webhook_url, "uid": uid},
     )
     await db.commit()
     return {"status": "saved", "message": "Slack webhook saved successfully"}
@@ -49,9 +57,10 @@ async def save_webhook(req: WebhookRequest, user=Depends(get_current_user), db=D
 @router.delete("/webhook")
 async def remove_webhook(user=Depends(get_current_user), db=Depends(get_db)):
     """Remove Slack webhook URL for the current user."""
+    uid = get_user_id(user)
     await db.execute(
         text("UPDATE users SET slack_webhook = '' WHERE id = :uid"),
-        {"uid": user.id},
+        {"uid": uid},
     )
     await db.commit()
     return {"status": "removed", "message": "Slack integration disconnected"}
@@ -60,9 +69,10 @@ async def remove_webhook(user=Depends(get_current_user), db=Depends(get_db)):
 @router.get("/status")
 async def get_slack_status(user=Depends(get_current_user), db=Depends(get_db)):
     """Check if Slack is configured for the current user."""
+    uid = get_user_id(user)
     result = await db.execute(
         text("SELECT slack_webhook FROM users WHERE id = :uid"),
-        {"uid": user.id},
+        {"uid": uid},
     )
     row = result.fetchone()
     webhook = row[0] if row and row[0] else ""
