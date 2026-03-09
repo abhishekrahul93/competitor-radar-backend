@@ -12,19 +12,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/battlecards", tags=["Battlecards"])
 
 
+def get_user_id(user):
+    """Get user ID whether user is a dict or object."""
+    if isinstance(user, dict):
+        return user.get("id") or user.get("user_id")
+    return getattr(user, "id", None)
+
+
 @router.get("/")
 async def list_battlecards(user=Depends(get_current_user), db=Depends(get_db)):
     """List all competitors available for battlecard generation."""
     try:
+        uid = get_user_id(user)
         result = await db.execute(
             text("SELECT id, name, website_url FROM competitors WHERE user_id = :uid ORDER BY name"),
-            {"uid": user.id},
+            {"uid": uid},
         )
         competitors = [{"id": r[0], "name": r[1], "website_url": r[2]} for r in result.fetchall()]
 
         battlecards = []
         for comp in competitors:
-            # Count changes for this competitor
             try:
                 count_result = await db.execute(
                     text("SELECT COUNT(*) FROM changes WHERE competitor_id = :cid"),
@@ -52,10 +59,12 @@ async def list_battlecards(user=Depends(get_current_user), db=Depends(get_db)):
 async def generate(competitor_id: int, user=Depends(get_current_user), db=Depends(get_db)):
     """Generate an AI battlecard for a specific competitor."""
     try:
+        uid = get_user_id(user)
+
         # Get competitor
         result = await db.execute(
             text("SELECT id, name, website_url FROM competitors WHERE id = :cid AND user_id = :uid"),
-            {"cid": competitor_id, "uid": user.id},
+            {"cid": competitor_id, "uid": uid},
         )
         row = result.fetchone()
         if not row:
@@ -63,7 +72,7 @@ async def generate(competitor_id: int, user=Depends(get_current_user), db=Depend
 
         competitor = {"id": row[0], "name": row[1], "website_url": row[2]}
 
-        # Get recent changes — use SELECT * to avoid column name issues
+        # Get recent changes
         changes = []
         try:
             changes_result = await db.execute(
@@ -71,7 +80,7 @@ async def generate(competitor_id: int, user=Depends(get_current_user), db=Depend
                 {"cid": competitor_id},
             )
             rows = changes_result.fetchall()
-            columns = changes_result.keys() if hasattr(changes_result, 'keys') else []
+            columns = list(changes_result.keys()) if hasattr(changes_result, 'keys') else []
             for r in rows:
                 row_dict = dict(zip(columns, r)) if columns else {}
                 changes.append({
