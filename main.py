@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from app.core.database import engine, Base
-from app.api import competitors, scanning, changes, reports, auth, demo, payments, export, seo, social, chat, teams
+from app.api import competitors, scanning, changes, reports, auth, demo, payments, export, seo, social, chat, teams, slack
 from app.services.scheduler import start_scheduler, stop_scheduler
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -54,6 +54,7 @@ app.include_router(seo.router, prefix="/api/seo", tags=["SEO"])
 app.include_router(social.router, prefix="/api", tags=["Social"])
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
 app.include_router(teams.router, prefix="/api", tags=["Teams"])
+app.include_router(slack.router, prefix="/api", tags=["Slack"])
 @app.get("/")
 async def root():
     return {"app": "Competitor Radar AI", "status": "running"}
